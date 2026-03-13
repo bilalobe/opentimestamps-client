@@ -13,7 +13,6 @@ import sys
 import json
 import contextlib
 
-import argparse
 import binascii
 import io
 import logging
@@ -21,8 +20,6 @@ import os
 import time
 import urllib.request
 import threading
-import bitcoin
-import bitcoin.rpc
 from queue import Queue, Empty
 
 from bitcoin.core import b2x, b2lx, lx, CTxOut, CTransaction
@@ -105,12 +102,12 @@ def detached_timestamp_to_json(detached_timestamp, verbosity=0):
 def verify_timestamp_json(timestamp, args):
     args.calendar_urls = []
     with _suppress_logging():
-        upgrade_timestamp(timestamp, args)
+        changed = upgrade_timestamp(timestamp, args)
 
     result = {
         "status": "failed",
         "verified": False,
-        "upgraded": True,
+        "upgraded": changed,
         "attestations": [],
     }
 
@@ -187,6 +184,7 @@ def verify_timestamp_json(timestamp, args):
             result["status"] = "manual_check_required"
 
     return result
+
 
 def remote_calendar(calendar_uri):
     """Create a remote calendar with User-Agent set appropriately"""
@@ -600,6 +598,8 @@ def verify_command(args):
         logging.error("Invalid timestamp file %r: %s" % (args.timestamp_fd.name, exp))
         sys.exit(1)
 
+    target_value = None
+
     if args.hex_digest is not None:
         try:
             digest = binascii.unhexlify(args.hex_digest.encode('utf8'))
@@ -626,6 +626,7 @@ def verify_command(args):
             except IOError as exp:
                 logging.error('Could not open target: %s' % exp)
                 sys.exit(1)
+        target_value = args.target_fd.name
 
         logging.debug("Hashing file, algorithm %s" % detached_timestamp.file_hash_op.TAG_NAME)
         actual_file_digest = detached_timestamp.file_hash_op.hash_fd(args.target_fd)
@@ -640,22 +641,21 @@ def verify_command(args):
         result = {
             "command": "verify",
             "timestamp_file": args.timestamp_fd.name,
-            "target": None,
             "digest": b2x(detached_timestamp.file_digest),
             "hash_algorithm": detached_timestamp.file_hash_op.HASHLIB_NAME,
         }
 
         if args.hex_digest is not None:
             result["target"] = {"type": "digest", "value": args.hex_digest.lower()}
-        elif args.target_fd is not None:
-            result["target"] = {"type": "file", "value": args.target_fd.name}
         else:
-            result["target"] = {"type": "file", "value": args.timestamp_fd.name[:-4]}
+            result["target"] = {"type": "file", "value": target_value}
 
         verify_result = verify_timestamp_json(detached_timestamp.timestamp, args)
         result.update(verify_result)
         result["exit_code"] = 0 if verify_result["verified"] else (
-            EXIT_VERIFY_PENDING if verify_result["status"] == "pending" else EXIT_VERIFY_FAILED
+            EXIT_VERIFY_PENDING
+            if verify_result["status"] in ("pending", "manual_check_required")
+            else EXIT_VERIFY_FAILED
         )
         print(json.dumps(result, indent=2, sort_keys=True))
         if not verify_result["verified"]:

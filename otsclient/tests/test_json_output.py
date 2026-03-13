@@ -129,3 +129,29 @@ class TestJsonOutput(unittest.TestCase):
                     cmds.verify_command(args)
 
         self.assertEqual(exc.exception.code, cmds.EXIT_VERIFY_FAILED)
+
+    def test_verify_command_json_exits_manual_check_required_with_code_2(self):
+        t = Timestamp(b"\xaa" * 32)
+        detached = DetachedTimestampFile(_HashOp(), t)
+        timestamp_fd = io.BytesIO(b"")
+        timestamp_fd.name = "dummy.ots"
+        args = _FakeArgs(
+            timestamp_fd=timestamp_fd,
+            hex_digest="aa" * 32,
+            target_fd=None,
+            json=True,
+        )
+
+        with patch("otsclient.cmds.DetachedTimestampFile.deserialize", return_value=detached):
+            with patch(
+                "otsclient.cmds.verify_timestamp_json",
+                return_value={
+                    "status": "manual_check_required",
+                    "verified": False,
+                    "attestations": [],
+                },
+            ):
+                with self.assertRaises(SystemExit) as exc:
+                    cmds.verify_command(args)
+
+        self.assertEqual(exc.exception.code, cmds.EXIT_VERIFY_PENDING)
